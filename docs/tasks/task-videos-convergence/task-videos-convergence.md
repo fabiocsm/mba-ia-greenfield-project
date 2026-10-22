@@ -13,7 +13,7 @@ sources_mtime:
 
 ## Objective
 
-Fechar as lacunas que `speckit-converge` anexou às specs 001–004, sem reabrir fila, upload, worker ou streaming.
+Fechar as lacunas de rascunho, upload, processamento e reprodução, sem reabrir fila, upload, worker ou streaming.
 
 ## Step Implementations
 
