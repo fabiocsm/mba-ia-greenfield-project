@@ -71,7 +71,7 @@ Storage product is not a decision: S3-compatible API, MinIO in local Docker. Nes
 ### Option C: One presigned PUT
 - The API signs a single PUT. The client sends the whole object.
 - **Pros:** Small API surface.
-- **Cons:** A dropped connection starts the 10GB body again. That misses the resume rule in `docs/project-3-plan.md`.
+- **Cons:** A dropped connection starts the 10GB body again. That misses the rule that the owner continues from the last accepted part.
 
 **Recommendation:** Option A — presigned multipart. It keeps the bytes off the API and resume is `ListParts` plus the missing parts.
 
