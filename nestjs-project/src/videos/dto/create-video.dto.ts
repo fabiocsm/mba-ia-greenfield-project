@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsOptional, IsString, IsUUID, ValidateIf } from 'class-validator';
 
 export class CreateVideoDto {
   @IsOptional()
@@ -9,7 +9,7 @@ export class CreateVideoDto {
   @IsString()
   description?: string | null;
 
-  @IsOptional()
+  @ValidateIf((_, value: unknown) => value !== undefined)
   @IsUUID()
   channelId?: string;
 }

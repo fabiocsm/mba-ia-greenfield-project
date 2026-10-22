@@ -35,7 +35,9 @@ describe('video processing claim (integration)', () => {
     await cleanAllTables(dataSource);
   });
 
-  async function insertDraft(): Promise<Video> {
+  async function insertDraft(
+    storageKey: string | null = `originals/worker-${sequence + 1}`,
+  ): Promise<Video> {
     const n = ++sequence;
     const user = await userRepository.save(
       userRepository.create({
@@ -55,7 +57,7 @@ describe('video processing claim (integration)', () => {
         channel_id: channel.id,
         public_url: `worker-url-${n}`,
         status: 'draft',
-        original_storage_key: `originals/worker-${n}`,
+        original_storage_key: storageKey,
       }),
     );
   }
@@ -109,5 +111,16 @@ describe('video processing claim (integration)', () => {
     expect(errorRow.status).toBe('error');
     expect(errorRow.original_storage_key).toBe(errorVideo.original_storage_key);
     expect(errorRow.thumbnail_storage_key).toBeNull();
+  });
+
+  it('leaves a draft without a stored file in draft', async () => {
+    const video = await insertDraft(null);
+
+    expect(await claimDraft(dataSource.manager, video.id)).toBeNull();
+
+    const row = await videoRepository.findOneByOrFail({ id: video.id });
+    expect(row.status).toBe('draft');
+    expect(row.processing_claim).toBeNull();
+    expect(row.original_storage_key).toBeNull();
   });
 });

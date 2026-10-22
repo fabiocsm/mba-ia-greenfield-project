@@ -31,7 +31,7 @@ export async function claimDraft(
     await manager.query(
       `UPDATE "videos"
        SET "status" = 'processing', "processing_claim" = $1, "updated_at" = now()
-       WHERE "id" = $2 AND "status" = 'draft'
+       WHERE "id" = $2 AND "status" = 'draft' AND "original_storage_key" IS NOT NULL
        RETURNING "id"`,
       [claim, videoId],
     ),

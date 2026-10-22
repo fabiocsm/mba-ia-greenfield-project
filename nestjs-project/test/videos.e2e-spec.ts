@@ -229,4 +229,40 @@ describe('videos', () => {
       .expect(404);
     expect(httpBody(foreign).error).toBe('VIDEO_NOT_FOUND');
   });
+
+  test('post-videos-sem-token', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/videos')
+      .send({})
+      .expect(401);
+
+    expect(res.status).toBe(401);
+    expect(await videoRepository.count()).toBe(0);
+  });
+
+  test('post-videos-channel-id-nulo', async () => {
+    const owner = await registerOwner(nextEmail());
+
+    const res = await request(app.getHttpServer())
+      .post('/videos')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ channelId: null })
+      .expect(400);
+
+    expect(httpBody(res).error).toBe('VALIDATION_ERROR');
+    expect(await videoRepository.count()).toBe(0);
+  });
+
+  test('post-videos-campo-nao-previsto', async () => {
+    const owner = await registerOwner(nextEmail());
+
+    const res = await request(app.getHttpServer())
+      .post('/videos')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ file: 'video-bytes' })
+      .expect(400);
+
+    expect(httpBody(res).error).toBe('VALIDATION_ERROR');
+    expect(await videoRepository.count()).toBe(0);
+  });
 });

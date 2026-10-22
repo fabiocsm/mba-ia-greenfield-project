@@ -34,6 +34,21 @@ docker compose exec nestjs-api npm run start:dev
 Services:
 - `nestjs-api` — NestJS API, port `3000`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `redis` — Redis for the `video-processing` queue
+- `minio` — S3-compatible object storage, bucket `videos`
+- `video-worker` — BullMQ worker that reads the original, writes duration, technical metadata, and `thumbnails/{id}`
+- `mailpit` — SMTP capture
+
+Video routes on `nestjs-api`:
+
+- `POST /videos` — draft
+- `GET /videos/:id` — `status`, `durationSeconds`, `technicalMetadata`, `thumbnailStored`, `file`
+- `POST /videos/:id/upload` — open or resume multipart
+- `POST /videos/:id/upload/complete` — store `originals/{id}` and enqueue `video-processing`
+- `GET /videos/:id/playback` — presigned playback URL
+- `GET /videos/:id/download` — presigned download URL (`Content-Disposition: attachment`)
+
+If Redis refuses the job, complete returns `503` `VIDEO_PROCESSING_NOT_SCHEDULED`.
 
 All verification and teardown commands run on the **host machine**:
 

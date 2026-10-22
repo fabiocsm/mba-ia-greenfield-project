@@ -73,6 +73,10 @@ function originalObjectKey(videoId: string): string {
   return `originals/${videoId}`;
 }
 
+function storedByteCount(parts: { size: number }[]): number {
+  return parts.reduce((sum, part) => sum + part.size, 0);
+}
+
 function assertUploadRequest(dto: OpenUploadDto): string {
   if (dto.sizeBytes === 0) {
     throw new VideoFileEmptyException();
@@ -178,7 +182,7 @@ export class VideosService {
       throw new VideoNotFoundException();
     }
 
-    return this.videos.manager.transaction(async (manager) => {
+    const opened = await this.videos.manager.transaction(async (manager) => {
       const repo = manager.getRepository(Video);
       const video = await repo.findOne({
         where: { id: videoId, channel_id: channel.id },
@@ -209,8 +213,16 @@ export class VideosService {
         throw new Error('Multipart upload id was not stored');
       }
 
+      const storedParts = await this.storage.listParts(key, uploadId);
+      if (storedByteCount(storedParts) > MAX_VIDEO_BYTES) {
+        await this.clearOversizedUpload(repo, video, key, uploadId);
+        return { tooLarge: true as const };
+      }
+
+      const statusCode: 200 | 201 = created ? 201 : 200;
       return {
-        statusCode: created ? 201 : 200,
+        tooLarge: false as const,
+        statusCode,
         body: {
           videoId: video.id,
           partSizeBytes: partSizeBytesFor(sizeBytes),
@@ -219,6 +231,25 @@ export class VideosService {
         },
       };
     });
+
+    if (opened.tooLarge) {
+      throw new VideoFileTooLargeException();
+    }
+
+    return { statusCode: opened.statusCode, body: opened.body };
+  }
+
+  private async clearOversizedUpload(
+    repo: Repository<Video>,
+    video: Video,
+    key: string,
+    uploadId: string,
+  ): Promise<void> {
+    await this.storage.abortMultipart(key, uploadId);
+    video.multipart_upload_id = null;
+    video.declared_size_bytes = null;
+    video.declared_content_type = null;
+    await repo.save(video);
   }
 
   private async missingParts(
@@ -285,6 +316,12 @@ export class VideosService {
         throw new VideoUploadIncompleteException();
       }
       const uploaded = new Set(parts.map((part) => part.partNumber));
+      const uploadedBytes = storedByteCount(parts);
+      if (uploadedBytes > MAX_VIDEO_BYTES) {
+        await this.clearOversizedUpload(repo, video, key, uploadId);
+        return { video, schedule: false, tooLarge: true };
+      }
+
       for (
         let partNumber = 1;
         partNumber <= partCountFor(sizeBytes);
@@ -294,12 +331,8 @@ export class VideosService {
           throw new VideoUploadIncompleteException();
         }
       }
-      const uploadedBytes = parts.reduce((sum, part) => sum + part.size, 0);
-      if (uploadedBytes > MAX_VIDEO_BYTES) {
-        await this.storage.abortMultipart(key, uploadId);
-        video.multipart_upload_id = null;
-        await repo.save(video);
-        return { video, schedule: false, tooLarge: true };
+      if (uploadedBytes !== sizeBytes) {
+        throw new VideoUploadIncompleteException();
       }
 
       await this.storage.completeMultipart(

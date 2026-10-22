@@ -19,6 +19,7 @@ describe('VideosService upload', () => {
   let storage: {
     createMultipart: jest.Mock;
     listUploadedPartNumbers: jest.Mock;
+    listParts: jest.Mock;
     signPart: jest.Mock;
     abortMultipart: jest.Mock;
   };
@@ -31,6 +32,7 @@ describe('VideosService upload', () => {
     storage = {
       createMultipart: jest.fn().mockResolvedValue('upload-1'),
       listUploadedPartNumbers: jest.fn().mockResolvedValue([]),
+      listParts: jest.fn().mockResolvedValue([]),
       signPart: jest.fn((_key: string, _uploadId: string, partNumber: number) =>
         Promise.resolve(`https://signed/${partNumber}`),
       ),
@@ -153,5 +155,33 @@ describe('VideosService upload', () => {
     expect(storage.createMultipart).not.toHaveBeenCalled();
     expect(storage.signPart).toHaveBeenCalledTimes(1);
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('aborts a resume whose accepted parts already exceed 10GB', async () => {
+    const video = draft({
+      multipart_upload_id: 'upload-existing',
+      declared_size_bytes: 10_000_000_000,
+      declared_content_type: 'video/mp4',
+    });
+    findOne.mockResolvedValue(video);
+    storage.listParts.mockResolvedValue([
+      { partNumber: 2, size: 10_000_000_001, eTag: '"oversized"' },
+    ]);
+
+    await expect(
+      service.openUpload('user-id', 'video-id', {
+        sizeBytes: 10_000_000_000,
+        contentType: 'video/mp4',
+      }),
+    ).rejects.toBeInstanceOf(VideoFileTooLargeException);
+
+    expect(storage.abortMultipart).toHaveBeenCalledWith(
+      'originals/video-id',
+      'upload-existing',
+    );
+    expect(video.multipart_upload_id).toBeNull();
+    expect(video.declared_size_bytes).toBeNull();
+    expect(video.declared_content_type).toBeNull();
+    expect(storage.signPart).not.toHaveBeenCalled();
   });
 });

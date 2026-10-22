@@ -14,6 +14,19 @@ This is a monorepo with two main areas:
 - `docs/` — Project documentation, architecture diagrams, and planning.
 - `next-frontend/` (Next.js) — not yet initialized
 
+## Videos API
+
+`VideosModule` in `nestjs-project`. The owner authenticates with the same JWT as the rest of the API.
+
+- `POST /videos` — creates one draft on the caller's channel
+- `GET /videos/:id` — returns that draft, including `status`, `durationSeconds`, `technicalMetadata`, `thumbnailStored`, and `file`
+- `POST /videos/:id/upload` — opens or resumes a multipart upload
+- `POST /videos/:id/upload/complete` — stores `originals/{id}` and enqueues processing
+- `GET /videos/:id/playback` — presigned URL for the ready original, so the client can send `Range`
+- `GET /videos/:id/download` — presigned URL of that same original, with `Content-Disposition: attachment`
+
+Processing uses the Compose service `video-worker` and the BullMQ queue `video-processing`. A scheduling failure returns `503` `VIDEO_PROCESSING_NOT_SCHEDULED`. Object storage is the Compose service `minio`, bucket `videos`.
+
 ## Architecture (C4 Container Diagram)
 
 See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
@@ -23,7 +36,7 @@ See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 - **Video Worker** (FFmpeg) → consumes jobs from queue, processes videos, updates DB and storage
 - **Database** (PostgreSQL) → users, channels, videos, comments, likes
 - **Object Storage** (S3/MinIO) → video files and thumbnails
-- **Message Queue** (TBD) → video processing job queue
+- **Message Queue** (BullMQ no Redis, fila `video-processing`) → video processing job queue
 - **Email Service** (SMTP) → account confirmation and password recovery
 
 ## Docker Networking

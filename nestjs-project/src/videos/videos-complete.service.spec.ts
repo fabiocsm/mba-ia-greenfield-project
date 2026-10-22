@@ -114,9 +114,47 @@ describe('VideosService complete', () => {
       'upload-1',
     );
     expect(video.multipart_upload_id).toBeNull();
+    expect(video.declared_size_bytes).toBeNull();
+    expect(video.declared_content_type).toBeNull();
     expect(video.original_storage_key).toBeNull();
     expect(storage.completeMultipart).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('aborts when accepted parts already exceed 10GB even if a part number is missing', async () => {
+    const video = row({ declared_size_bytes: 10_000_000_000 });
+    findOne.mockResolvedValue(video);
+    storage.listParts.mockResolvedValue([
+      { partNumber: 2, size: 10_000_000_001, eTag: '"oversized"' },
+    ]);
+
+    await expect(
+      service.completeUpload('user-id', 'video-id'),
+    ).rejects.toBeInstanceOf(VideoFileTooLargeException);
+
+    expect(storage.abortMultipart).toHaveBeenCalledWith(
+      'originals/video-id',
+      'upload-1',
+    );
+    expect(video.declared_size_bytes).toBeNull();
+    expect(video.declared_content_type).toBeNull();
+    expect(video.original_storage_key).toBeNull();
+    expect(storage.completeMultipart).not.toHaveBeenCalled();
+  });
+
+  it('does not complete when the uploaded bytes differ from the declared size', async () => {
+    const video = row();
+    findOne.mockResolvedValue(video);
+    storage.listParts.mockResolvedValue([part(512)]);
+
+    await expect(
+      service.completeUpload('user-id', 'video-id'),
+    ).rejects.toBeInstanceOf(VideoUploadIncompleteException);
+
+    expect(storage.completeMultipart).not.toHaveBeenCalled();
+    expect(storage.abortMultipart).not.toHaveBeenCalled();
+    expect(video.original_storage_key).toBeNull();
+    expect(video.declared_size_bytes).toBe(1024);
   });
 
   it('keeps the stored key when the queue refuses the job', async () => {
