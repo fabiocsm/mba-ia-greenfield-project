@@ -234,6 +234,90 @@ describe('videos-upload-complete', () => {
     expect(row.status).toBe('draft');
   });
 
+  test('post-complete-retoma-original-apos-resposta-perdida-do-storage', async () => {
+    const accessToken = await registerOwner();
+    const videoId = await createDraft(accessToken);
+    const opened = await openUpload(accessToken, videoId, sampleVideo.length);
+    await putPart(httpBody(opened).parts[0].url, sampleVideo);
+    const storage = app.get(VideoStorage);
+    const completeMultipart = storage.completeMultipart.bind(
+      storage,
+    ) as VideoStorage['completeMultipart'];
+    jest
+      .spyOn(storage, 'completeMultipart')
+      .mockImplementationOnce(async (...args) => {
+        await completeMultipart(...args);
+        throw new Error(
+          'Storage completed the upload but its response was lost',
+        );
+      });
+
+    await complete(accessToken, videoId).expect(500);
+    const rolledBack = await videoRepository.findOneByOrFail({ id: videoId });
+    expect(rolledBack.original_storage_key).toBeNull();
+    expect(rolledBack.multipart_upload_id).toEqual(expect.any(String));
+    await expect(storage.headObject(`originals/${videoId}`)).resolves.toEqual({
+      sizeBytes: sampleVideo.length,
+    });
+
+    // A new upload must not replace the completed original while DB state lags.
+    const reopen = await request(app.getHttpServer())
+      .post(`/videos/${videoId}/upload`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ sizeBytes: sampleVideo.length, contentType: 'video/mp4' })
+      .expect(409);
+    expect(httpBody(reopen).error).toBe('VIDEO_FILE_ALREADY_STORED');
+
+    const retried = await complete(accessToken, videoId).expect(200);
+    expect(httpBody(retried).file.associated).toBe(true);
+    await waitForStatus(accessToken, videoId, 'ready');
+    const ready = await videoRepository.findOneByOrFail({ id: videoId });
+    expect(ready.original_storage_key).toBe(`originals/${videoId}`);
+    expect(ready.multipart_upload_id).toBeNull();
+    const original = await fetch(
+      await storage.signGet(`originals/${videoId}`, false),
+    );
+    expect(Buffer.from(await original.arrayBuffer())).toEqual(sampleVideo);
+  });
+
+  test('post-upload-reabre-multipart-abortado-apos-rollback', async () => {
+    const accessToken = await registerOwner();
+    const videoId = await createDraft(accessToken);
+    const opened = await openUpload(accessToken, videoId, sampleVideo.length);
+    await putPart(httpBody(opened).parts[0].url, sampleVideo);
+    const original = await videoRepository.findOneByOrFail({ id: videoId });
+    const storage = app.get(VideoStorage);
+    jest
+      .spyOn(storage, 'listParts')
+      .mockResolvedValueOnce([
+        { partNumber: 1, size: 10_000_000_001, eTag: '"oversized"' },
+      ]);
+    const abortMultipart = storage.abortMultipart.bind(
+      storage,
+    ) as VideoStorage['abortMultipart'];
+    jest
+      .spyOn(storage, 'abortMultipart')
+      .mockImplementationOnce(async (...args) => {
+        await abortMultipart(...args);
+        throw new Error('Storage aborted the upload but its response was lost');
+      });
+
+    await complete(accessToken, videoId).expect(500);
+    const rolledBack = await videoRepository.findOneByOrFail({ id: videoId });
+    expect(rolledBack.multipart_upload_id).toBe(original.multipart_upload_id);
+    expect(rolledBack.original_storage_key).toBeNull();
+    await expect(
+      storage.headObject(`originals/${videoId}`),
+    ).resolves.toBeNull();
+
+    const reopened = await openUpload(accessToken, videoId, sampleVideo.length);
+    const replaced = await videoRepository.findOneByOrFail({ id: videoId });
+    expect(replaced.multipart_upload_id).not.toBe(original.multipart_upload_id);
+    await putPart(httpBody(reopened).parts[0].url, sampleVideo);
+    await complete(accessToken, videoId).expect(200);
+    await waitForStatus(accessToken, videoId, 'ready');
+  });
+
   test('post-complete-redis-inacessivel-retorna-503-e-permite-retomar', async () => {
     const accessToken = await registerOwner();
     const videoId = await createDraft(accessToken);

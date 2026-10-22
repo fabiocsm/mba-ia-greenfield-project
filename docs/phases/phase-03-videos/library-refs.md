@@ -62,3 +62,22 @@ Compose. FFmpeg/ffprobe are system binaries installed in `Dockerfile.worker`;
 Existing `@nestjs/throttler@6.5.0`: Context7 `/nestjs/throttler`,
 [SkipThrottle](https://github.com/nestjs/throttler#usage) for owner-only metadata
 polling. Authentication limits remain covered by the existing auth E2E suite.
+
+## PR #1 recovery review (2026-10-22)
+
+Context7 resolved/retrieved the same AWS SDK and BullMQ IDs before corrections.
+Checked `HeadObjectCommand`/`ContentLength`, `NoSuchUpload`, retained custom job
+IDs, `Job.getState()`/`retry()` and `Queue.getJob()` against the installed
+3.1123.0 / 6.4.0 packages. The BullMQ catalog still advertises v6.3.11, so the
+installed declarations and real Redis regressions verify the APIs used here.
+
+Also retrieved `/typeorm/typeorm` for `EntityManager.find` with explicit
+`select`/`where` and transaction manager rules. Installed TypeORM is 0.3.28;
+the catalog's nearest listed 0.3 release is 0.3.27. Existing claim-conditional
+updates and PostgreSQL regressions remain authoritative. No dependency changes.
+
+References: [S3 HEAD](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html),
+[S3 multipart completion](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html),
+[BullMQ job IDs](https://docs.bullmq.io/guide/jobs/job-ids),
+[manual job retry](https://docs.bullmq.io/guide/jobs/retrying-job),
+[TypeORM EntityManager](https://typeorm.io/docs/working-with-entity-manager/entity-manager-api/).

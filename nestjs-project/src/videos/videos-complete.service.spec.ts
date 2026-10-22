@@ -4,7 +4,11 @@ import { ChannelsService } from '../channels/channels.service';
 import { Video } from './entities/video.entity';
 import { PublicUrlAllocator } from './public-url.allocator';
 import { VideoProcessingQueue } from './video-processing.queue';
-import { StoredPart, VideoStorage } from './video-storage';
+import {
+  MultipartUploadNotFoundError,
+  StoredPart,
+  VideoStorage,
+} from './video-storage';
 import {
   VideoFileTooLargeException,
   VideoProcessingNotScheduledException,
@@ -19,6 +23,7 @@ describe('VideosService complete', () => {
     listParts: jest.Mock;
     completeMultipart: jest.Mock;
     abortMultipart: jest.Mock;
+    headObject: jest.Mock;
   };
   let enqueue: jest.Mock;
   let findOne: jest.Mock;
@@ -32,6 +37,7 @@ describe('VideosService complete', () => {
       listParts: jest.fn().mockResolvedValue([]),
       completeMultipart: jest.fn().mockResolvedValue(undefined),
       abortMultipart: jest.fn().mockResolvedValue(undefined),
+      headObject: jest.fn().mockResolvedValue(null),
     };
 
     const module = await Test.createTestingModule({
@@ -155,6 +161,67 @@ describe('VideosService complete', () => {
     expect(storage.abortMultipart).not.toHaveBeenCalled();
     expect(video.original_storage_key).toBeNull();
     expect(video.declared_size_bytes).toBe(1024);
+  });
+
+  it('associates an already completed original when the database write was lost', async () => {
+    const video = row();
+    findOne.mockResolvedValue(video);
+    storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+    storage.headObject.mockResolvedValue({ sizeBytes: 1024 });
+
+    const result = await service.completeUpload('user-id', 'video-id');
+
+    expect(result.file.associated).toBe(true);
+    expect(video.original_storage_key).toBe('originals/video-id');
+    expect(video.multipart_upload_id).toBeNull();
+    expect(save).toHaveBeenCalledWith(video);
+    expect(enqueue).toHaveBeenCalledWith('video-id');
+    expect(storage.completeMultipart).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { sizeBytes: 512 }])(
+    'rejects recovery when the completed original is absent or has a different length (%j)',
+    async (stored) => {
+      const video = row();
+      findOne.mockResolvedValue(video);
+      storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+      storage.headObject.mockResolvedValue(stored);
+
+      await expect(
+        service.completeUpload('user-id', 'video-id'),
+      ).rejects.toBeInstanceOf(VideoUploadIncompleteException);
+
+      expect(video.original_storage_key).toBeNull();
+      expect(video.multipart_upload_id).toBe('upload-1');
+      expect(save).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it('propagates an unavailable storage service without claiming completion', async () => {
+    const video = row();
+    findOne.mockResolvedValue(video);
+    const failure = new Error('storage unavailable');
+    storage.listParts.mockRejectedValue(failure);
+
+    await expect(service.completeUpload('user-id', 'video-id')).rejects.toBe(
+      failure,
+    );
+    expect(storage.headObject).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('propagates failed object inspection instead of treating it as a missing original', async () => {
+    findOne.mockResolvedValue(row());
+    storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+    const failure = new Error('access denied');
+    storage.headObject.mockRejectedValue(failure);
+
+    await expect(service.completeUpload('user-id', 'video-id')).rejects.toBe(
+      failure,
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('keeps the stored key when the queue refuses the job', async () => {

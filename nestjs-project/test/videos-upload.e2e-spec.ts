@@ -1,3 +1,5 @@
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
@@ -197,6 +199,55 @@ describe('videos-upload', () => {
     expect(httpBody(resumed).parts).toHaveLength(1);
     expect(httpBody(resumed).parts[0].partNumber).toBe(2);
     expect(httpBody(resumed).parts[0].url).toEqual(expect.any(String));
+  });
+
+  test('post-upload-retoma-parte-incompleta-e-permite-concluir', async () => {
+    const owner = await registerOwner(nextEmail());
+    const videoId = await createDraft(owner.accessToken);
+    const video = await readFile(join(__dirname, 'fixtures/tiny.mp4'));
+    const body = { sizeBytes: video.length, contentType: 'video/mp4' };
+    const opened = await upload(owner.accessToken, videoId, body).expect(201);
+    const originalUpload = await videoRepository.findOneByOrFail({
+      id: videoId,
+    });
+
+    const shortPart = await fetch(httpBody(opened).parts[0].url, {
+      method: 'PUT',
+      body: new Uint8Array(video.subarray(0, Math.floor(video.length / 2))),
+    });
+    expect(shortPart.ok).toBe(true);
+
+    const incomplete = await request(app.getHttpServer())
+      .post(`/videos/${videoId}/upload/complete`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(409);
+    expect(httpBody(incomplete).error).toBe('VIDEO_UPLOAD_INCOMPLETE');
+
+    // Use only the resumed response, as a client renewing an expired URL does.
+    const resumed = await upload(owner.accessToken, videoId, body).expect(200);
+    expect(httpBody(resumed).parts).toHaveLength(1);
+    expect(httpBody(resumed).parts[0].partNumber).toBe(1);
+    const repaired = await fetch(httpBody(resumed).parts[0].url, {
+      method: 'PUT',
+      body: new Uint8Array(video),
+    });
+    expect(repaired.ok).toBe(true);
+    const resumedRow = await videoRepository.findOneByOrFail({ id: videoId });
+    expect(resumedRow.multipart_upload_id).toBe(
+      originalUpload.multipart_upload_id,
+    );
+
+    const completed = await request(app.getHttpServer())
+      .post(`/videos/${videoId}/upload/complete`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(httpBody(completed).file.associated).toBe(true);
+    expect(httpBody(completed).file.sizeBytes).toBe(video.length);
+    const stored = await fetch(
+      await app.get(VideoStorage).signGet(`originals/${videoId}`, false),
+    );
+    expect(stored.status).toBe(200);
+    expect(Buffer.from(await stored.arrayBuffer())).toEqual(video);
   });
 
   test('post-upload-arquivo-vazio', async () => {

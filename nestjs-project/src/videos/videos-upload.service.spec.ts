@@ -4,7 +4,7 @@ import { ChannelsService } from '../channels/channels.service';
 import { Video } from './entities/video.entity';
 import { PublicUrlAllocator } from './public-url.allocator';
 import { VideoProcessingQueue } from './video-processing.queue';
-import { VideoStorage } from './video-storage';
+import { MultipartUploadNotFoundError, VideoStorage } from './video-storage';
 import {
   VideoFileAlreadyStoredException,
   VideoFileEmptyException,
@@ -22,6 +22,7 @@ describe('VideosService upload', () => {
     listParts: jest.Mock;
     signPart: jest.Mock;
     abortMultipart: jest.Mock;
+    headObject: jest.Mock;
   };
   let findOne: jest.Mock;
   let save: jest.Mock;
@@ -37,6 +38,7 @@ describe('VideosService upload', () => {
         Promise.resolve(`https://signed/${partNumber}`),
       ),
       abortMultipart: jest.fn(),
+      headObject: jest.fn().mockResolvedValue(null),
     };
 
     const videos = {
@@ -140,6 +142,9 @@ describe('VideosService upload', () => {
         declared_content_type: 'video/mp4',
       }),
     );
+    storage.listParts.mockResolvedValue([
+      { partNumber: 1, size: 5_242_880, eTag: '"correct"' },
+    ]);
     storage.listUploadedPartNumbers.mockResolvedValue([1]);
 
     const opened = await service.openUpload('user-id', 'video-id', {
@@ -156,6 +161,44 @@ describe('VideosService upload', () => {
     expect(storage.signPart).toHaveBeenCalledTimes(1);
     expect(save).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { firstSize: 5_242_879, finalSize: 1024, expectedParts: [1] },
+    { firstSize: 5_242_880, finalSize: 512, expectedParts: [2] },
+    { firstSize: 5_242_880, finalSize: 1025, expectedParts: [2] },
+    { firstSize: 5_242_880, finalSize: 1024, expectedParts: [] },
+  ])(
+    're-signs incorrect part lengths ($firstSize, $finalSize) and omits correct parts',
+    async ({ firstSize, finalSize, expectedParts }) => {
+      findOne.mockResolvedValue(
+        draft({
+          multipart_upload_id: 'upload-existing',
+          declared_size_bytes: 5_242_880 + 1024,
+          declared_content_type: 'video/mp4',
+        }),
+      );
+      storage.listParts.mockResolvedValue([
+        { partNumber: 1, size: firstSize, eTag: '"first"' },
+        { partNumber: 2, size: finalSize, eTag: '"final"' },
+      ]);
+      storage.listUploadedPartNumbers.mockResolvedValue([1, 2]);
+
+      const opened = await service.openUpload('user-id', 'video-id', {
+        sizeBytes: 5_242_880 + 1024,
+        contentType: 'video/mp4',
+      });
+
+      expect(opened.statusCode).toBe(200);
+      expect(opened.body.parts.map((part) => part.partNumber)).toEqual(
+        expectedParts,
+      );
+      expect(storage.signPart).toHaveBeenCalledTimes(expectedParts.length);
+      expect(storage.listParts).toHaveBeenCalledTimes(1);
+      expect(storage.listUploadedPartNumbers).not.toHaveBeenCalled();
+      expect(storage.createMultipart).not.toHaveBeenCalled();
+      expect(storage.abortMultipart).not.toHaveBeenCalled();
+    },
+  );
 
   it('aborts a resume whose accepted parts already exceed 10GB', async () => {
     const video = draft({
@@ -183,5 +226,73 @@ describe('VideosService upload', () => {
     expect(video.declared_size_bytes).toBeNull();
     expect(video.declared_content_type).toBeNull();
     expect(storage.signPart).not.toHaveBeenCalled();
+  });
+
+  it('restarts a stale multipart after an abort was not committed in the database', async () => {
+    const video = draft({
+      multipart_upload_id: 'upload-aborted',
+      declared_size_bytes: 10_000_000_000,
+      declared_content_type: 'video/mp4',
+    });
+    findOne.mockResolvedValue(video);
+    storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+
+    const result = await service.openUpload('user-id', 'video-id', {
+      sizeBytes: 2048,
+      contentType: 'video/webm',
+    });
+
+    expect(result.statusCode).toBe(201);
+    expect(result.body.sizeBytes).toBe(2048);
+    expect(result.body.parts.map((part) => part.partNumber)).toEqual([1]);
+    expect(video.multipart_upload_id).toBe('upload-1');
+    expect(video.declared_content_type).toBe('video/webm');
+    expect(storage.createMultipart).toHaveBeenCalledWith(
+      'originals/video-id',
+      'video/webm',
+    );
+  });
+
+  it('does not start a replacement upload over an unassociated completed original', async () => {
+    findOne.mockResolvedValue(
+      draft({
+        multipart_upload_id: 'upload-completed',
+        declared_size_bytes: 1024,
+      }),
+    );
+    storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+    storage.headObject.mockResolvedValue({ sizeBytes: 1024 });
+
+    await expect(
+      service.openUpload('user-id', 'video-id', {
+        sizeBytes: 2048,
+        contentType: 'video/webm',
+      }),
+    ).rejects.toBeInstanceOf(VideoFileAlreadyStoredException);
+
+    expect(storage.createMultipart).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a stale upload when inspecting its original fails', async () => {
+    findOne.mockResolvedValue(
+      draft({
+        multipart_upload_id: 'upload-missing',
+        declared_size_bytes: 1024,
+      }),
+    );
+    storage.listParts.mockRejectedValue(new MultipartUploadNotFoundError());
+    const failure = new Error('Object inspection is forbidden');
+    storage.headObject.mockRejectedValue(failure);
+
+    await expect(
+      service.openUpload('user-id', 'video-id', {
+        sizeBytes: 2048,
+        contentType: 'video/webm',
+      }),
+    ).rejects.toBe(failure);
+
+    expect(storage.createMultipart).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 });

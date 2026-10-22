@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import storageConfig from '../config/storage.config';
 import { S3VideoStorage } from './s3-video-storage';
+import { MultipartUploadNotFoundError } from './video-storage';
 
 describe('S3VideoStorage (integration)', () => {
   const storage = new S3VideoStorage(storageConfig());
@@ -36,7 +37,44 @@ describe('S3VideoStorage (integration)', () => {
     uploadId = undefined;
     await storage.abortMultipart(key, id);
 
-    await expect(storage.listUploadedPartNumbers(key, id)).rejects.toThrow();
+    await expect(
+      storage.listUploadedPartNumbers(key, id),
+    ).rejects.toBeInstanceOf(MultipartUploadNotFoundError);
+  });
+
+  it('distinguishes a missing object from a forbidden HEAD request', async () => {
+    await expect(
+      storage.headObject(`originals/missing-${Date.now()}`),
+    ).resolves.toBeNull();
+    const forbidden = new S3VideoStorage({
+      ...storageConfig(),
+      accessKey: 'invalid-access-key',
+      secretKey: 'invalid-secret-key',
+    });
+
+    await expect(forbidden.headObject(key)).rejects.toMatchObject({
+      $metadata: { httpStatusCode: 403 },
+    });
+  });
+
+  it('inspects the immutable original after multipart completion consumes the upload', async () => {
+    const body = new TextEncoder().encode('completed-original');
+    uploadId = await storage.createMultipart(key, 'video/mp4');
+    const put = await fetch(await storage.signPart(key, uploadId, 1), {
+      method: 'PUT',
+      body,
+    });
+    expect(put.ok).toBe(true);
+    const id = uploadId;
+    await storage.completeMultipart(key, id, await storage.listParts(key, id));
+    uploadId = undefined;
+
+    await expect(storage.headObject(key)).resolves.toEqual({
+      sizeBytes: body.byteLength,
+    });
+    await expect(storage.listParts(key, id)).rejects.toBeInstanceOf(
+      MultipartUploadNotFoundError,
+    );
   });
 
   it('serves a playback range and the full download of the original', async () => {

@@ -166,7 +166,7 @@ implementation units; these corrections close their acceptance gaps.
 **Acceptance criteria:**
 
 - `POST /videos/:id/upload` do dono, com vídeo de até 10000000000 bytes, retorna `201` com `videoId`, `partSizeBytes`, `sizeBytes` e `parts`.
-- O mesmo POST com multipart já aberto retorna `200` e só as partes que `ListParts` ainda não vê.
+- O mesmo POST com multipart já aberto retorna `200` e as partes ausentes ou com tamanho diferente do esperado em `ListParts`.
 - `sizeBytes` `0` retorna `422` com `error` `VIDEO_FILE_EMPTY` e não cria multipart.
 - `sizeBytes` acima de 10000000000 retorna `422` com `error` `VIDEO_FILE_TOO_LARGE`.
 - Tipo que não começa com `video/` retorna `422` com `error` `VIDEO_FILE_NOT_VIDEO`.
@@ -346,12 +346,12 @@ Não inclui `fileUrl`, `processing_claim` nem a chave `thumbnails/{id}`.
 - sizeBytes: integer, required — `0` é vazio; acima de 10000000000 é excesso; 10000000000 é aceito
 - contentType: string, required — o trecho antes de `;`, sem espaços nas pontas, começa com `video/` sem diferenciar maiúsculas
 
-**Response 201:** multipart novo. **Response 200:** multipart já existente; o corpo lista só as partes que faltam (`ListParts`, per `videos/TD-02`).
+**Response 201:** multipart novo. **Response 200:** multipart já existente; o corpo lista as partes ausentes ou com tamanho incorreto (`ListParts`, per `videos/TD-02`).
 
 - videoId: uuid do rascunho
 - partSizeBytes: `5242880`, ou o próprio `sizeBytes` quando o arquivo cabe numa parte
 - sizeBytes: tamanho declarado aceito
-- parts: lista ordenada do que ainda falta. Cada item tem `partNumber` (a partir de 1) e `url` (endereço assinado da parte). Lista vazia só se todas as partes já chegaram e o complete ainda não rodou
+- parts: lista ordenada do que ainda falta ou precisa ser substituído por tamanho incorreto. Cada item tem `partNumber` (a partir de 1) e `url` (endereço assinado da parte). Lista vazia só se todas as partes já chegaram com os tamanhos esperados e o complete ainda não rodou
 
 A `url` da parte pode vencer sem apagar partes já aceitas. Outro POST no mesmo rascunho devolve URLs novas para o que falta e reutiliza o mesmo `multipart_upload_id`. `original_storage_key` continua `null`. Dois POST simultâneos no mesmo rascunho criam um só multipart.
 
@@ -376,6 +376,13 @@ A `url` da parte pode vencer sem apagar partes já aceitas. Outro POST no mesmo 
 **Response 200:** o mesmo corpo de `GET /videos/:id`. Na associação que acaba de gravar a chave, `status` continua `draft`, `file.associated` é `true`, `durationSeconds` é `null`, `technicalMetadata` é `null`, `thumbnailStored` é `false`. A API não espera o worker.
 
 Grava `original_storage_key` = `originals/{id}`, encerra o multipart e zera `multipart_upload_id` (per `videos/TD-07`). Em seguida publica um job com `jobId` igual ao `id` do vídeo (per `videos/TD-01`). Complete repetido com a chave já gravada não cria outro objeto e não publica um segundo job com o mesmo `jobId`. Complete com status `processing`, `ready` ou `error` não muda a linha nem publica outro job.
+
+Se o storage concluir antes de uma falha na transação do banco, outro complete
+consulta o original imutável via HEAD, valida o tamanho declarado e recupera a
+associação antes de agendar. Um job falho antes do claim pode ser reagendado por
+complete enquanto o vídeo segue draft. A reconciliação periódica do worker grava
+error para claims ainda processing cujo job já terminou; falhas de banco são
+retomadas na próxima passagem, sem executar a mídia novamente.
 
 **Error responses:**
 - 409 VIDEO_UPLOAD_INCOMPLETE: faltam partes. As partes já aceitas permanecem. Nenhuma chave final

@@ -11,7 +11,12 @@ import { VideoDraftResponseDto } from './dto/video-draft-response.dto';
 import { nullIfBlank, Video } from './entities/video.entity';
 import { PublicUrlAllocator } from './public-url.allocator';
 import { VideoProcessingQueue } from './video-processing.queue';
-import { SIGNED_URL_TTL_SECONDS, VideoStorage } from './video-storage';
+import {
+  SIGNED_URL_TTL_SECONDS,
+  MultipartUploadNotFoundError,
+  type StoredPart,
+  VideoStorage,
+} from './video-storage';
 import {
   ChannelNotFoundException,
   VideoChannelForbiddenException,
@@ -211,7 +216,7 @@ export class VideosService {
       }
 
       const key = originalObjectKey(video.id);
-      const created = video.multipart_upload_id == null;
+      let created = video.multipart_upload_id == null;
       if (created) {
         video.multipart_upload_id = await this.storage.createMultipart(
           key,
@@ -222,13 +227,33 @@ export class VideosService {
         await repo.save(video);
       }
 
-      const sizeBytes = video.declared_size_bytes ?? dto.sizeBytes;
-      const uploadId = video.multipart_upload_id;
+      let sizeBytes = video.declared_size_bytes ?? dto.sizeBytes;
+      let uploadId = video.multipart_upload_id;
       if (uploadId == null) {
         throw new Error('Multipart upload id was not stored');
       }
 
-      const storedParts = await this.storage.listParts(key, uploadId);
+      let storedParts: StoredPart[];
+      try {
+        storedParts = await this.storage.listParts(key, uploadId);
+      } catch (error) {
+        if (!(error instanceof MultipartUploadNotFoundError) || created) {
+          throw error;
+        }
+        if ((await this.storage.headObject(key)) != null) {
+          throw new VideoFileAlreadyStoredException();
+        }
+        // An abort can succeed in storage before its database transaction fails.
+        // Replace only an absent upload with no completed original to preserve.
+        uploadId = await this.storage.createMultipart(key, contentType);
+        video.multipart_upload_id = uploadId;
+        video.declared_size_bytes = dto.sizeBytes;
+        video.declared_content_type = contentType;
+        await repo.save(video);
+        sizeBytes = dto.sizeBytes;
+        created = true;
+        storedParts = [];
+      }
       if (storedByteCount(storedParts) > MAX_VIDEO_BYTES) {
         await this.clearOversizedUpload(repo, video, key, uploadId);
         return { tooLarge: true as const };
@@ -242,7 +267,7 @@ export class VideosService {
           videoId: video.id,
           partSizeBytes: partSizeBytesFor(sizeBytes),
           sizeBytes,
-          parts: await this.missingParts(key, uploadId, sizeBytes),
+          parts: await this.missingParts(key, uploadId, sizeBytes, storedParts),
         },
       };
     });
@@ -271,17 +296,23 @@ export class VideosService {
     key: string,
     uploadId: string,
     sizeBytes: number,
+    storedParts: StoredPart[],
   ): Promise<OpenUploadResponseDto['parts']> {
-    const uploaded = new Set(
-      await this.storage.listUploadedPartNumbers(key, uploadId),
+    const uploadedSizes = new Map(
+      storedParts.map((part) => [part.partNumber, part.size]),
     );
+    const partSizeBytes = partSizeBytesFor(sizeBytes);
     const missing: number[] = [];
     for (
       let partNumber = 1;
       partNumber <= partCountFor(sizeBytes);
       partNumber++
     ) {
-      if (!uploaded.has(partNumber)) {
+      const expectedSize = Math.min(
+        partSizeBytes,
+        sizeBytes - (partNumber - 1) * partSizeBytes,
+      );
+      if (uploadedSizes.get(partNumber) !== expectedSize) {
         missing.push(partNumber);
       }
     }
@@ -325,10 +356,29 @@ export class VideosService {
 
       const key = originalObjectKey(video.id);
       const uploadId = video.multipart_upload_id;
-      const parts = await this.storage.listParts(key, uploadId);
       const sizeBytes = video.declared_size_bytes;
       if (sizeBytes == null) {
         throw new VideoUploadIncompleteException();
+      }
+      let parts: StoredPart[];
+      try {
+        parts = await this.storage.listParts(key, uploadId);
+      } catch (error) {
+        if (!(error instanceof MultipartUploadNotFoundError)) {
+          throw error;
+        }
+        // Completion consumes the upload even if the subsequent DB write fails.
+        const original = await this.storage.headObject(key);
+        if (original == null || original.sizeBytes !== sizeBytes) {
+          throw new VideoUploadIncompleteException();
+        }
+        if (original.sizeBytes > MAX_VIDEO_BYTES) {
+          throw new VideoFileTooLargeException();
+        }
+        video.original_storage_key = key;
+        video.multipart_upload_id = null;
+        await repo.save(video);
+        return { video, schedule: true, tooLarge: false };
       }
       const uploaded = new Set(parts.map((part) => part.partNumber));
       const uploadedBytes = storedByteCount(parts);

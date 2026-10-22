@@ -61,6 +61,14 @@ A producer failure returns `503 VIDEO_PROCESSING_NOT_SCHEDULED` within a bounded
 wait (5 seconds for scheduling); complete can be repeated safely. Claim tokens
 prevent a duplicate from changing a terminal result.
 
+When storage completion succeeds before an interrupted database write, complete
+reconciles `originals/{id}` through HEAD and checks its declared byte length.
+Resume offers replacement URLs for parts with incorrect lengths. A retained job
+that failed before claiming a draft can be explicitly rescheduled by complete;
+the single media attempt policy still applies. Worker startup and periodic
+reconciliation compare processing claims with terminal queue jobs and retry status
+persistence after a database outage, preserving ready/error outcomes.
+
 Teardown: `docker compose down` preserves the named volumes.
 
 ## Commands

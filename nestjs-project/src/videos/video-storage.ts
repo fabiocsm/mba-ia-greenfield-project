@@ -1,5 +1,7 @@
 export const SIGNED_URL_TTL_SECONDS = 900;
 
+export class MultipartUploadNotFoundError extends Error {}
+
 export interface StoredPart {
   partNumber: number;
   size: number;
@@ -7,6 +9,8 @@ export interface StoredPart {
 }
 
 export abstract class VideoStorage {
+  abstract headObject(key: string): Promise<{ sizeBytes: number } | null>;
+
   abstract createMultipart(key: string, contentType: string): Promise<string>;
 
   abstract listParts(key: string, uploadId: string): Promise<StoredPart[]>;

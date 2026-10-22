@@ -3,7 +3,7 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-10-20T16:03:03-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:13:27-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:36:46-03:00"
   docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-22T02:08:26-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-10-20T16:03:03-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-10-20T16:03:03-03:00"
@@ -31,6 +31,12 @@ sources_mtime:
 - Download do vídeo pelo usuário
 
 **Out of scope:** video UI, public watch pages, anonymous playback, HLS/transcoding and phase 04 video/channel management.
+
+PR #1 recovery corrections preserve the selected decisions: reconcile immutable
+completed originals after interrupted database writes, replace parts with wrong
+lengths, explicitly reschedule pre-claim failures, and reconcile terminal queue
+jobs with persisted processing claims after outages/restarts. The correction
+plan and observed regressions are recorded in `pr-review.md`.
 
 **Deliverables:** upload de até 10GB funcional, processamento automático do vídeo, streaming funcionando, URLs únicas geradas.
 

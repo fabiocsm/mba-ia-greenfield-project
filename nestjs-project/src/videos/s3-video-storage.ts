@@ -7,9 +7,13 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListPartsCommand,
+  type ListPartsCommandOutput,
+  NoSuchUpload,
   PutObjectCommand,
   S3Client,
+  S3ServiceException,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -17,6 +21,7 @@ import { ConfigType } from '@nestjs/config';
 import storageConfig from '../config/storage.config';
 import {
   SIGNED_URL_TTL_SECONDS,
+  MultipartUploadNotFoundError,
   StoredPart,
   VideoStorage,
 } from './video-storage';
@@ -57,6 +62,26 @@ export class S3VideoStorage extends VideoStorage {
       : this.client;
   }
 
+  async headObject(key: string): Promise<{ sizeBytes: number } | null> {
+    try {
+      const object = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (object.ContentLength == null) {
+        throw new Error('Object storage did not return the object length');
+      }
+      return { sizeBytes: object.ContentLength };
+    } catch (error) {
+      if (
+        error instanceof S3ServiceException &&
+        error.$metadata.httpStatusCode === 404
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async createMultipart(key: string, contentType: string): Promise<string> {
     const created = await this.client.send(
       new CreateMultipartUploadCommand({
@@ -76,14 +101,27 @@ export class S3VideoStorage extends VideoStorage {
     let partNumberMarker: string | undefined;
 
     do {
-      const page = await this.client.send(
-        new ListPartsCommand({
-          Bucket: this.bucket,
-          Key: key,
-          UploadId: uploadId,
-          PartNumberMarker: partNumberMarker,
-        }),
-      );
+      let page: ListPartsCommandOutput;
+      try {
+        page = await this.client.send(
+          new ListPartsCommand({
+            Bucket: this.bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumberMarker: partNumberMarker,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof NoSuchUpload) {
+          throw new MultipartUploadNotFoundError(
+            'Multipart upload is missing',
+            {
+              cause: error,
+            },
+          );
+        }
+        throw error;
+      }
       for (const part of page.Parts ?? []) {
         if (part.PartNumber == null || !part.ETag) {
           continue;

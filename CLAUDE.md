@@ -40,6 +40,13 @@ Processing uses the Compose service `video-worker` and the BullMQ queue `video-p
 → `processing` → `ready`/`error`; media failures keep the original and fail the job.
 Terminal stalled jobs reconcile interrupted processing to `error`.
 
+Upload recovery verifies the immutable `originals/{id}` object before associating
+a completion whose database write was interrupted. Resume renews URLs for missing
+parts and parts with incorrect lengths. Repeating complete can reschedule a job
+that failed before claiming a draft; terminal media outcomes remain unchanged.
+The worker periodically reconciles persisted processing claims with terminal queue
+jobs, so a database outage cannot permanently lose an error update.
+
 `docker compose up -d --build` in `nestjs-project/` installs locked dependencies,
 runs migrations, provisions storage and starts API and worker. Named volumes
 persist PostgreSQL, video objects and Redis AOF. Research, plan and audit evidence

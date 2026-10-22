@@ -86,3 +86,19 @@ Do not build (deleteOutDir) concurrently with requests against the dev server;
 finish build and restart the API before the live smoke. Tests themselves boot
 isolated HTTP applications inside Jest; do not run them concurrently with the
 large-file smoke because they clean the shared development database.
+
+## PR #1 review — 2026-10-22
+
+Four recovery defects were fixed: interrupted storage/database completion,
+retained failed jobs before claim, incorrectly sized parts omitted during resume,
+and terminal processing status lost during database outages. Research and the
+correction plan precede the fixes in `pr-review.md`; all existing SI decisions and
+public contracts are preserved. An independent delta review found no remaining
+actionable regressions. Test-only typing errors found by lint were corrected.
+
+Final Docker gates: 35 suites / 218 unit/integration tests, 7 suites / 91 E2E
+tests, TypeScript, lint and build all passed. API and worker were restarted after
+build. The real 11,000,000-byte / three-part upload resumed, processed to ready,
+and passed thumbnail, Range/206 and full-download SHA-256 checks with zero health
+failures. Evidence: `pr-review.md` and `pr-review-smoke-report.json`. The earlier
+10GB acceptance report remains historical; this review did not repeat it.

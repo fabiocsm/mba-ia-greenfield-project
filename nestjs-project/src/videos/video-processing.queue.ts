@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
-import { Queue } from 'bullmq';
+import { ErrorCode, Queue } from 'bullmq';
 import queueConfig from '../config/queue.config';
 
 export const VIDEO_PROCESSING_QUEUE = 'video-processing';
@@ -32,7 +32,7 @@ export class VideoProcessingQueue implements OnModuleDestroy {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.queue.add('process', { videoId }, { jobId: videoId, attempts: 1 }),
+        this.addOrRetry(videoId),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(
             () => reject(new Error('Video queue scheduling timed out')),
@@ -42,6 +42,38 @@ export class VideoProcessingQueue implements OnModuleDestroy {
       ]);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private async addOrRetry(videoId: string): Promise<void> {
+    const job = await this.queue.getJob(videoId);
+    if (!job || (await job.getState()) !== 'failed') {
+      await this.queue.add(
+        'process',
+        { videoId },
+        { jobId: videoId, attempts: 1 },
+      );
+      return;
+    }
+
+    try {
+      await job.retry('failed', {
+        resetAttemptsMade: true,
+        resetAttemptsStarted: true,
+      });
+    } catch (error) {
+      // Another completion request may have retried the same failed job first.
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === ErrorCode.JobNotInState
+      ) {
+        const state = await job.getState();
+        if (state !== 'failed' && state !== 'unknown') {
+          return;
+        }
+      }
+      throw error;
     }
   }
 

@@ -275,3 +275,22 @@ video detail as `/videos/{id}`. Browser watch pages are phase 05. Signed playbac
 and download URLs are temporary capabilities, separate from that stable identity.
 10GB means **10,000,000,000 bytes**, with parts of 5,242,880 bytes (1,908 parts at
 the limit). Expired URLs can be renewed through the same handshake.
+
+## PR #1 recovery review — 2026-10-22
+
+These are corrections within TD-01/TD-02/TD-06, preserving the selected options:
+
+- Resume renews URLs for missing parts and for parts with an incorrect expected
+  length, including the final part.
+- Storage completion and the database commit are separate effects. Complete
+  reconciles the immutable `originals/{id}` via HEAD and validates its byte length
+  when recovering an interrupted association. An absent aborted upload can be
+  reopened without replacing an already completed original.
+- A completion retry can reschedule a retained failed job for a draft that was
+  never claimed. This is an explicit scheduling retry, not a second media attempt.
+- The worker reconciles persisted processing claims with terminal queue jobs on
+  startup and periodically. Database outages delay the error write; they do not
+  discard it or cause media to run again. Active/waiting jobs and terminal video
+  outcomes are preserved.
+
+Correction plan and regression evidence: `../phases/phase-03-videos/pr-review.md`.

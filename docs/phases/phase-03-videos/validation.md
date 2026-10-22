@@ -5,9 +5,9 @@ status: clean
 issue_count: 0
 validated_at: "2026-10-22"
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-10-22T02:22:36-03:00"
-  docs/phases/phase-03-videos/phase-03-videos.md: "2026-10-22T02:22:36-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:13:27-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-10-22T02:42:49-03:00"
+  docs/phases/phase-03-videos/phase-03-videos.md: "2026-10-22T02:36:46-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:36:46-03:00"
   docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-22T02:08:26-03:00"
   nestjs-project/package.json: "2026-10-22T02:09:57-03:00"
   nestjs-project/compose.yaml: "2026-10-22T02:06:26-03:00"
@@ -16,6 +16,13 @@ advisories: []
 ---
 
 # phase-03-videos — Validation
+
+PR #1 recovery review is complete: all four findings in `pr-review.md` are fixed
+and the combined delta was independently reviewed. Final Docker verification:
+35 suites / 218 unit/integration tests, 7 suites / 91 E2E tests, TypeScript, lint
+and build passed. Real 11MB multipart/worker/thumbnail/Range/download verification
+passed (`pr-review-smoke-report.json`). The 10GB acceptance results below remain
+historical; that large smoke was not rerun for this review.
 
 ## Findings
 
