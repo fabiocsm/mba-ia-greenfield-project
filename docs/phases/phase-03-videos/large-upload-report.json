@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "sizeBytes": 10000000000,
+  "parts": 1908,
+  "videoId": "76b5a2c7-64c0-4a38-a981-2ad57713bcb5",
+  "url": "/videos/by-url/VRZzKwtPe9tC",
+  "states": [
+    "draft",
+    "draft",
+    "processing",
+    "ready"
+  ],
+  "uploadSeconds": 32.945,
+  "processingSeconds": 9.944,
+  "apiHealthSamples": 199,
+  "apiHealthFailures": 0,
+  "apiMaxLatencyMs": 44.276,
+  "durationSeconds": 1,
+  "thumbnailStored": true,
+  "rangeRequests": [
+    {
+      "start": 0,
+      "status": 206,
+      "bytes": 1024
+    },
+    {
+      "start": 5000000000,
+      "status": 206,
+      "bytes": 1024
+    },
+    {
+      "start": 9999998976,
+      "status": 206,
+      "bytes": 1024
+    }
+  ],
+  "downloadedBytes": 10000000000,
+  "sha256": "ce796a7fd7d8846c6acfae995f119711f854cf5f836386836f1201f4d0c9676f",
+  "sha256Matches": true,
+  "fixture": "Valid tiny.mp4 with zero padding to exactly 10GB; real bytes transferred",
+  "sampleRetained": false
+}

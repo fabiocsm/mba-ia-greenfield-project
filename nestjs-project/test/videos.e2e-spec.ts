@@ -104,6 +104,40 @@ describe('videos', () => {
     return `video_owner_${sequence}@example.com`;
   }
 
+  test('url-unica-resolve-o-video-e-preserva-a-autorizacao', async () => {
+    const owner = await registerOwner(nextEmail());
+    const other = await registerOwner(nextEmail());
+    const created = await request(app.getHttpServer())
+      .post('/videos')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({})
+      .expect(201);
+    const url = httpBody(created).url;
+    expect(url).toMatch(/^\/videos\/by-url\/[a-zA-Z0-9_-]+$/);
+    const resolved = await request(app.getHttpServer())
+      .get(url)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(httpBody(resolved).id).toBe(httpBody(created).id);
+    expect(httpBody(resolved).url).toBe(url);
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await request(app.getHttpServer())
+        .get(`/videos/${httpBody(created).id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+    }
+    await request(app.getHttpServer()).get(url).expect(401);
+    const forbidden = await request(app.getHttpServer())
+      .get(url)
+      .set('Authorization', `Bearer ${other.accessToken}`)
+      .expect(404);
+    expect(httpBody(forbidden).error).toBe('VIDEO_NOT_FOUND');
+    await request(app.getHttpServer())
+      .get('/videos/by-url/unknown')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(404);
+  });
+
   // 1. POST /videos
   test('post-videos-cria-rascunho', async () => {
     const owner = await registerOwner(nextEmail());

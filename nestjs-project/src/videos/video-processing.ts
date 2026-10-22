@@ -88,6 +88,19 @@ export async function markError(
   return rows.length > 0;
 }
 
+// A worker killed while holding a BullMQ lock cannot run its own catch block.
+// BullMQ's terminal failed event reconciles that interrupted processing state.
+export async function markInterrupted(
+  manager: EntityManager,
+  videoId: string,
+): Promise<void> {
+  await manager.query(
+    `UPDATE "videos" SET "status" = 'error', "updated_at" = now()
+     WHERE "id" = $1 AND "status" = 'processing'`,
+    [videoId],
+  );
+}
+
 export async function probeMedia(inputPath: string): Promise<ProbeResult> {
   const { stdout } = await execFileAsync('ffprobe', [
     '-v',
@@ -139,8 +152,9 @@ export async function processVideo(
     return;
   }
 
-  const directory = await mkdtemp(join(tmpdir(), 'streamtube-'));
+  let directory: string | undefined;
   try {
+    directory = await mkdtemp(join(tmpdir(), 'streamtube-'));
     const video = await manager.findOne(Video, { where: { id: videoId } });
     if (!video?.original_storage_key) {
       throw new Error('Original object is missing');
@@ -157,9 +171,12 @@ export async function processVideo(
       technicalMetadata: probed.technicalMetadata,
       thumbnailStorageKey,
     });
-  } catch {
+  } catch (error) {
     await markError(manager, videoId, claim);
+    throw error;
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (directory) {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 }

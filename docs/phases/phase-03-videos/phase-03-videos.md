@@ -3,10 +3,10 @@ kind: phase
 name: phase-03-videos
 test_specs_aware: true
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-10-21T14:48:50-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-10-22T02:22:36-03:00"
   docs/project-plan.md: "2026-10-20T16:03:03-03:00"
-  docs/decisions/technical-decisions-videos.md: "2026-10-20T17:36:38-03:00"
-  docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-21T14:45:28-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:13:27-03:00"
+  docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-22T02:08:26-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-10-20T16:03:03-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-10-20T16:03:03-03:00"
   docs/phases/phase-02-auth/context.md: "2026-10-20T16:03:03-03:00"
@@ -21,6 +21,26 @@ sources_mtime:
 Entregar o upload de até 10GB funcional, o processamento automático do vídeo, o streaming e as URLs únicas: armazenamento de vídeos e thumbnails, fila, upload sem impacto na performance, pré-cadastro do rascunho ao iniciar o upload, duração e metadados, thumbnail a partir de um frame, URL sem conflito, reprodução sem download completo e download pelo dono.
 
 ---
+
+## Audit implementation details (2026-10-22)
+
+Research and correction plan: `acceptance-audit.md`. Existing SIs remain the
+implementation units; these corrections close their acceptance gaps.
+
+- SI-03.1: `dependencies` runs `npm ci`, `migrate` applies migrations, then API
+  starts automatically and worker consumes. Named volumes preserve DB, Redis AOF
+  and objects. Initializers must exit 0; API has an HTTP healthcheck.
+- SI-03.3: response `url` is the resolvable `/videos/by-url/{token}` path, retaining
+  the unique stored token, ownership checks and collision retries.
+- SI-03.4/SI-03.6: internal storage endpoint stays `minio:9000`; signed client URLs
+  use `STORAGE_PUBLIC_ENDPOINT`. Jest's in-container HTTP client uses service DNS.
+  URLs expire in 900 seconds; renew missing part URLs through the same handshake.
+- SI-03.5: producer scheduling is bounded to 5 seconds with offline queue disabled;
+  failed scheduling returns 503 while preserving the original. Temp-directory
+  errors and terminal stalled jobs set `error`; media errors fail the job.
+- Additional evidence: actual 10GB multipart transfer and processing while polling
+  API health, resumability, Range/206 and full SHA-256 checked download through
+  `nestjs-project/scripts/smoke-video-upload.py`. See `validation.md` for results.
 
 ## Step Implementations
 
@@ -239,7 +259,7 @@ Tabela `videos`. Uma linha por envio iniciado. O arquivo e a thumbnail não são
 | id | uuid | PK, generated. Não é a URL pública |
 | channel_id | uuid | NOT NULL, FK `channels.id` ON DELETE RESTRICT |
 | status | varchar | NOT NULL, default `draft`. Valores: `draft`, `processing`, `ready`, `error`. CHECK |
-| public_url | varchar | NOT NULL, UNIQUE. Na resposta HTTP o mesmo valor se chama `url` |
+| public_url | varchar | NOT NULL, UNIQUE. A resposta HTTP `url` é `/videos/by-url/{public_url}` |
 | title | text | NULL. Ausente, `null` ou em branco persiste `null` |
 | description | text | NULL. Mesma regra de `title` |
 | declared_size_bytes | bigint | NULL. Inteiro de 1 a 10000000000 inclusive enquanto há envio ou arquivo associado |
@@ -279,7 +299,7 @@ Rotas autenticadas pelo guard JWT já global. Nenhuma usa `@Public()`. Envelope 
 - id: string (uuid)
 - channelId: string (uuid)
 - status: `draft`
-- url: string não vazia. É a coluna `public_url`
+- url: string não vazia. Caminho relativo `/videos/by-url/{public_url}`, resolvido pela API com JWT do dono
 - title: string ou `null`
 - description: string ou `null`
 
@@ -410,6 +430,14 @@ Um GET nesse `fileUrl` sem `Range` devolve o objeto inteiro. A linha não muda. 
 - `sizeBytes`: obrigatório no upload; inteiro; `0` recusado; máximo 10000000000 inclusive
 - `contentType`: obrigatório no upload; depois do recorte antes de `;`, começa com `video/`
 
+#### GET /videos/by-url/:token (SI-03.3)
+
+Resolve o caminho relativo `url` retornado no pré-cadastro. Header JWT obrigatório.
+Resposta `200`: mesmo corpo de `GET /videos/:id`, com o mesmo `id` e `url`.
+`401` sem autenticação; `404 VIDEO_NOT_FOUND` para token inexistente ou de outro
+canal. O índice UNIQUE do token mantém a identidade estável e livre de conflito.
+Nenhuma página pública ou acesso anônimo é introduzido.
+
 ### Authorization Matrix
 
 Quem não é o dono do canal da linha recebe a mesma recusa de id inexistente (`404` `VIDEO_NOT_FOUND`), não uma lista do que existe.
@@ -417,6 +445,7 @@ Quem não é o dono do canal da linha recebe a mesma recusa de id inexistente (`
 | Endpoint | Anonymous | Authenticated | Owner |
 |----------|-----------|---------------|-------|
 | POST /videos | ✗ | ✓ se o canal é o do token | ✓ |
+| GET /videos/by-url/:token | ✗ | ✗ | ✓ |
 | GET /videos/:id | ✗ | ✗ | ✓ |
 | POST /videos/:id/upload | ✗ | ✗ | ✓ |
 | POST /videos/:id/upload/complete | ✗ | ✗ | ✓ |
@@ -481,17 +510,22 @@ SI-03.2 (root)
 
 ## Deliverables
 
-- [ ] SI-03.1 — Subir object storage e Redis
-- [ ] SI-03.2 — Criar a tabela videos
-- [ ] SI-03.3 — Registrar e ler o rascunho
-- [ ] SI-03.4 — Abrir e retomar o upload
-- [ ] SI-03.5 — Concluir o arquivo e processar
-- [ ] SI-03.6 — Entregar reprodução e download
+- [x] SI-03.1 — Subir object storage e Redis
+- [x] SI-03.2 — Criar a tabela videos
+- [x] SI-03.3 — Registrar e ler o rascunho
+- [x] SI-03.4 — Abrir e retomar o upload
+- [x] SI-03.5 — Concluir o arquivo e processar
+- [x] SI-03.6 — Entregar reprodução e download
 
 **Full test suites:**
 
-- [ ] Backend tests pass (`cd nestjs-project && docker compose exec nestjs-api npm test -- --runInBand`)
-- [ ] E2E tests pass (`cd nestjs-project && docker compose exec nestjs-api npm run test:e2e`)
-- [ ] Type/compilation checks pass (`cd nestjs-project && docker compose exec nestjs-api npx tsc --noEmit`)
-- [ ] Project builds successfully (`cd nestjs-project && docker compose exec nestjs-api npm run build`)
-- [ ] Lint passes (`cd nestjs-project && docker compose exec nestjs-api npm run lint`)
+- [x] Backend tests pass (`cd nestjs-project && docker compose exec nestjs-api npm test -- --runInBand`)
+- [x] E2E tests pass (`cd nestjs-project && docker compose exec nestjs-api npm run test:e2e`)
+- [x] Type/compilation checks pass (`cd nestjs-project && docker compose exec nestjs-api npx tsc --noEmit`)
+- [x] Project builds successfully (`cd nestjs-project && docker compose exec nestjs-api npm run build`)
+- [x] Lint passes (`cd nestjs-project && docker compose exec nestjs-api npm run lint`)
+
+Owner-only metadata reads (`GET /videos/:id` and `/videos/by-url/:token`)
+are exempt from the inherited auth throttler so clients can poll processing
+status. JWT and ownership checks still apply. Upload/playback commands keep the
+existing throttler.

@@ -234,6 +234,30 @@ describe('videos-upload-complete', () => {
     expect(row.status).toBe('draft');
   });
 
+  test('post-complete-redis-inacessivel-retorna-503-e-permite-retomar', async () => {
+    const accessToken = await registerOwner();
+    const videoId = await createDraft(accessToken);
+    const opened = await openUpload(accessToken, videoId, sampleVideo.length);
+    await putPart(httpBody(opened).parts[0].url, sampleVideo);
+    const unavailable = new VideoProcessingQueue({ host: 'redis', port: 1 });
+    const enqueue = jest
+      .spyOn(app.get(VideoProcessingQueue), 'enqueue')
+      .mockImplementation((id: string) => unavailable.enqueue(id));
+    try {
+      const started = Date.now();
+      const res = await complete(accessToken, videoId).expect(503);
+      expect(Date.now() - started).toBeLessThan(6500);
+      expect(httpBody(res).error).toBe('VIDEO_PROCESSING_NOT_SCHEDULED');
+    } finally {
+      enqueue.mockRestore();
+      await unavailable.onModuleDestroy();
+    }
+
+    // The uploaded original remains and a real, healthy queue can accept it.
+    await complete(accessToken, videoId).expect(200);
+    await waitForStatus(accessToken, videoId, 'ready');
+  }, 20_000);
+
   // 2. GET /videos/:id
   test('get-videos-id-depois-do-worker-ready', async () => {
     const accessToken = await registerOwner();
@@ -249,6 +273,14 @@ describe('videos-upload-complete', () => {
     expect(httpBody(res).technicalMetadata).toEqual(expect.any(Object));
     expect(httpBody(res).thumbnailStored).toBe(true);
     expect(httpBody(res).file.associated).toBe(true);
+    const row = await videoRepository.findOneByOrFail({ id: videoId });
+    const thumbnail = await fetch(
+      await app.get(VideoStorage).signGet(row.thumbnail_storage_key!, false),
+    );
+    expect(thumbnail.status).toBe(200);
+    expect(thumbnail.headers.get('content-type')).toBe('image/jpeg');
+    const bytes = Buffer.from(await thumbnail.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString('hex')).toBe('ffd8');
   });
 
   test('get-videos-id-depois-do-worker-error', async () => {

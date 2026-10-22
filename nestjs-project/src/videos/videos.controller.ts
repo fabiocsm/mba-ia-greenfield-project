@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -67,7 +68,33 @@ export class VideosController {
     return this.videosService.create(user.sub, dto);
   }
 
+  @Get('by-url/:token')
+  @SkipThrottle()
+  @ApiOperation({
+    summary: 'Resolve the unique video URL for its owner',
+    description:
+      'Resolves the stable URL returned at draft creation, with the same ownership checks as lookup by id.',
+  })
+  @ApiResponse({ status: 200, type: VideoDetailResponseDto })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid access token',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video does not exist or belongs to another channel',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  findByUrl(
+    @CurrentUser() user: JwtPayload,
+    @Param('token') token: string,
+  ): Promise<VideoDetailResponseDto> {
+    return this.videosService.findOwnByUrl(user.sub, token);
+  }
+
   @Get(':id')
+  @SkipThrottle()
   @ApiOperation({
     summary: 'Read the owner video',
     description:

@@ -1,6 +1,10 @@
 # phase-03-videos — Progress
 
 **Status:** completed
+
+The SI notes below are historical implementation observations; the acceptance
+audit section records the current environment and supersedes temporary setup
+limitations.
 **SIs:** 6/6 completed
 
 ### SI-03.1 — Subir object storage e Redis
@@ -41,3 +45,44 @@
 - **Status:** completed
 - **Tests:** 15 passing
 - **Observations:** none
+
+
+## Acceptance audit — 2026-10-22
+
+Corrections were researched and planned in `acceptance-audit.md` before edits.
+
+- SI-03.1: Compose now installs lockfile dependencies, applies migrations and
+  starts API and worker. Database/storage/Redis use persistent named volumes.
+  Before migration to volumes, the existing database and objects were backed up
+  and restored. API has a real HTTP healthcheck; initializers exit 0.
+- SI-03.3: unique URL now resolves via owner-only `GET /videos/by-url/:token`;
+  both metadata GETs support status polling without the inherited auth limit.
+- SI-03.4/SI-03.6: signatures use the client-visible storage endpoint, while
+  internal calls and test clients retain Compose service DNS.
+- SI-03.5: actual unreachable Redis yields bounded 503; resubmitting complete
+  schedules the preserved original. Allocation/media failures set error and fail
+  the job; interrupted terminal jobs also reconcile processing to error.
+- Foundation: root/backend/frontend `AGENTS.md`, 23 resolving shared skill links
+  under `.agents/skills`, Codex MCP configuration and documented tool mappings.
+- Canonical decisions file and all required phase artifacts present. The plan
+  keeps six SIs, all five Technical Specifications, dependency map and deliverables.
+- OpenAPI re-exported with video contracts and the resolvable URL route.
+
+### Definition of Done
+
+All commands ran in `nestjs-api`, sequentially for suites sharing the database:
+
+| Gate | Result |
+|---|---|
+| `npm test` | 33 suites, 185 tests passed (script enforces runInBand) |
+| `npm run test:e2e` | 7 suites, 88 tests passed |
+| `npx tsc --noEmit` | exit 0 |
+| `npm run lint` | exit 0 |
+| `npm run build` | exit 0 |
+| `npm run openapi:export` | exit 0 |
+
+Large-file smoke evidence is recorded in `validation.md` and `large-upload-report.json`.
+Do not build (deleteOutDir) concurrently with requests against the dev server;
+finish build and restart the API before the live smoke. Tests themselves boot
+isolated HTTP applications inside Jest; do not run them concurrently with the
+large-file smoke because they clean the shared development database.

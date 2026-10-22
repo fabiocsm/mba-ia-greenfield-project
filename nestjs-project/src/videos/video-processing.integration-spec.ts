@@ -8,7 +8,12 @@ import {
 } from '../test/create-test-data-source';
 import { User } from '../users/entities/user.entity';
 import { Video } from './entities/video.entity';
-import { claimDraft, markError, markReady } from './video-processing';
+import {
+  claimDraft,
+  markError,
+  markInterrupted,
+  markReady,
+} from './video-processing';
 
 const ALL_ENTITIES = [User, Channel, Video, RefreshToken, VerificationToken];
 
@@ -122,5 +127,26 @@ describe('video processing claim (integration)', () => {
     expect(row.status).toBe('draft');
     expect(row.processing_claim).toBeNull();
     expect(row.original_storage_key).toBeNull();
+  });
+
+  it('marks an interrupted worker as error while preserving the original and terminal states', async () => {
+    const video = await insertDraft();
+    await claimDraft(dataSource.manager, video.id);
+    await markInterrupted(dataSource.manager, video.id);
+    const interrupted = await videoRepository.findOneByOrFail({ id: video.id });
+    expect(interrupted.status).toBe('error');
+    expect(interrupted.original_storage_key).toBe(video.original_storage_key);
+
+    const ready = await insertDraft();
+    const claim = await claimDraft(dataSource.manager, ready.id);
+    await markReady(dataSource.manager, ready.id, claim!, {
+      durationSeconds: 1,
+      technicalMetadata: { format: {}, streams: [] },
+      thumbnailStorageKey: `thumbnails/${ready.id}`,
+    });
+    await markInterrupted(dataSource.manager, ready.id);
+    expect(
+      (await videoRepository.findOneByOrFail({ id: ready.id })).status,
+    ).toBe('ready');
   });
 });

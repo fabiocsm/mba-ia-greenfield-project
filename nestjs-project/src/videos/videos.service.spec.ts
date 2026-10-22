@@ -56,7 +56,7 @@ describe('VideosService', () => {
       }),
     );
     expect(result.status).toBe('draft');
-    expect(result.url).toBe('url-1');
+    expect(result.url).toBe('/videos/by-url/url-1');
   });
 
   it('stores blank title and description as null', async () => {
@@ -107,6 +107,6 @@ describe('VideosService', () => {
 
     expect(publicUrls.allocate).toHaveBeenCalledTimes(2);
     expect(videos.save).toHaveBeenCalledTimes(2);
-    expect(result.url).toBe('url-2');
+    expect(result.url).toBe('/videos/by-url/url-2');
   });
 });

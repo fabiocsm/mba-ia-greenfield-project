@@ -13,7 +13,7 @@ _Subprojects in scope:_
 - `nestjs-project/` — the command that records the draft and the row it persists. No new library: NestJS and TypeORM are already the stack.
 - `next-frontend/` — no open decision. Screens stay out of this phase.
 
-This note does not reopen queue, presigned multipart upload, worker, public URL, streaming, failure handling, or bucket layout. Those stay in `docs/decisions/technical-decisions-videos.md`.
+This note does not reopen queue, presigned multipart upload, worker, public URL, streaming, failure handling, or bucket layout. Those stay in `docs/decisions/technical-decisions-phase-03-videos.md`.
 
 ---
 

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
+import type { FindOptionsWhere } from 'typeorm';
 import { ChannelsService } from '../channels/channels.service';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { OpenUploadDto } from './dto/open-upload.dto';
@@ -51,7 +52,7 @@ function toDraft(video: Video): VideoDraftResponseDto {
     id: video.id,
     channelId: video.channel_id,
     status: video.status,
-    url: video.public_url,
+    url: `/videos/by-url/${video.public_url}`,
     title: video.title,
     description: video.description,
   };
@@ -156,13 +157,27 @@ export class VideosService {
     userId: string,
     videoId: string,
   ): Promise<VideoDetailResponseDto> {
+    return this.findOwnBy(userId, { id: videoId });
+  }
+
+  async findOwnByUrl(
+    userId: string,
+    token: string,
+  ): Promise<VideoDetailResponseDto> {
+    return this.findOwnBy(userId, { public_url: token });
+  }
+
+  private async findOwnBy(
+    userId: string,
+    identifier: FindOptionsWhere<Video>,
+  ): Promise<VideoDetailResponseDto> {
     const channel = await this.channelsService.findByUserId(userId);
     if (!channel) {
       throw new VideoNotFoundException();
     }
 
     const video = await this.videos.findOne({
-      where: { id: videoId, channel_id: channel.id },
+      where: { ...identifier, channel_id: channel.id },
     });
     if (!video) {
       throw new VideoNotFoundException();

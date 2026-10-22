@@ -3,7 +3,7 @@ kind: task
 name: task-videos-convergence
 sources_mtime:
   docs/phases/phase-03-videos/context.md: "2026-10-21T14:48:50-03:00"
-  docs/decisions/technical-decisions-videos.md: "2026-10-20T17:36:38-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-20T17:36:38-03:00"
   docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-21T14:45:28-03:00"
   docs/decisions/technical-decisions-phase-02-auth.md: "2026-10-20T16:03:03-03:00"
   .claude/skills/testing-guide-nestjs-project/SKILL.md: "2026-10-20T16:03:03-03:00"

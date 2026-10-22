@@ -2,70 +2,66 @@
 
 ## Environment Startup Verification
 
-**Default behavior:** starting the environment means starting **only infrastructure services** (database, mail, etc.) — **never** start the NestJS application server unless the user explicitly asks to run/serve the project (e.g., "rode o projeto", "suba o servidor", "run the app").
-
-After starting infrastructure, always confirm the containers are up before proceeding:
+For infrastructure alone, name the services explicitly:
 
 ```bash
-docker compose ps   # all services must show status "running"
+docker compose up -d db redis minio minio-init mailpit
+docker compose ps
+docker compose exec db pg_isready -U streamtube
+docker compose exec redis redis-cli ping
 ```
 
-Then verify each infrastructure service is actually ready to accept connections — not just running:
+For the complete backend (including phase 03 acceptance verification):
 
-- **PostgreSQL:** `docker compose exec db pg_isready -U streamtube` — expect `accepting connections`
+```bash
+# First checkout only: create .env from the committed example
+cp .env.example .env
+docker compose up -d --build
+docker compose ps
+curl --fail http://localhost:3000/
+```
 
-Only start the NestJS dev server (`npm run start:dev`) when the user **explicitly** asks to run the application — never as part of "start the environment".
+Compose runs `dependencies` (`npm ci`), then `migrate` (`npm run migration:run`),
+then API (`npm run start:dev`) and worker. One-shot initializer containers exiting
+0 is expected. Never start a second API server using `exec`. Server-to-server
+hosts are `db`, `redis`, `minio`, `mailpit`. Named volumes persist database,
+objects and Redis AOF; do not use `down -v` to stop the environment.
 
 ## Development Environment
 
-This project runs inside Docker. Always use the container for development:
+All npm/npx/node commands run inside Docker. Services:
 
-```bash
-# Start containers
-docker compose up -d
+- `nestjs-api` — NestJS API, port `3000`, HTTP healthcheck
+- `db` — PostgreSQL 17, port `5432`, database/user/password `streamtube`
+- `redis` — BullMQ queue `video-processing`, port `6379`, AOF enabled
+- `minio` — S3-compatible storage (`pgsty/silo`), bucket `videos`, ports `9000/9001`
+- `video-worker` — BullMQ consumer, ffprobe metadata and ffmpeg thumbnail
+- `mailpit` — SMTP capture, ports `1025/8025`
 
-# Install dependencies (first time only)
-docker compose exec nestjs-api npm install
+## Videos
 
-# Run the dev server (watch mode)
-docker compose exec nestjs-api npm run start:dev
-```
+Owner JWT protects every video route:
 
-Services:
-- `nestjs-api` — NestJS API, port `3000`
-- `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
-- `redis` — Redis for the `video-processing` queue
-- `minio` — S3-compatible object storage, bucket `videos`
-- `video-worker` — BullMQ worker that reads the original, writes duration, technical metadata, and `thumbnails/{id}`
-- `mailpit` — SMTP capture
+- `POST /videos` persists `draft` before storage, returns unique resolvable `url` (`/videos/by-url/{token}`)
+- `GET /videos/:id` returns status, durationSeconds, technicalMetadata,
+  thumbnailStored and file association
+- `POST /videos/:id/upload` opens/resumes multipart and signs missing parts
+- `POST /videos/:id/upload/complete` stores `originals/{id}` and enqueues processing
+- `GET /videos/:id/playback` signs the ready original; storage supports Range/206
+- `GET /videos/:id/download` signs that same original as an attachment
 
-Video routes on `nestjs-api`:
+Maximum: 10,000,000,000 bytes; parts: 5,242,880 bytes (last part may be smaller).
+Video bytes go directly to storage. API/worker use `STORAGE_ENDPOINT=minio`;
+client signatures use `STORAGE_PUBLIC_ENDPOINT` (host browser: localhost:9000).
+Jest uses internal service DNS via `test/storage-endpoint.setup.ts`.
 
-- `POST /videos` — draft
-- `GET /videos/:id` — `status`, `durationSeconds`, `technicalMetadata`, `thumbnailStored`, `file`
-- `POST /videos/:id/upload` — open or resume multipart
-- `POST /videos/:id/upload/complete` — store `originals/{id}` and enqueue `video-processing`
-- `GET /videos/:id/playback` — presigned playback URL
-- `GET /videos/:id/download` — presigned download URL (`Content-Disposition: attachment`)
+The worker persists `draft` → `processing` → `ready`/`error`. A media failure
+keeps the original and fails the job. Terminal stalled jobs also set `error`.
+A producer failure returns `503 VIDEO_PROCESSING_NOT_SCHEDULED` within a bounded
+wait (5 seconds for scheduling); complete can be repeated safely. Claim tokens
+prevent a duplicate from changing a terminal result.
 
-If Redis refuses the job, complete returns `503` `VIDEO_PROCESSING_NOT_SCHEDULED`.
-
-All verification and teardown commands run on the **host machine**:
-
-```bash
-# Verify NestJS is running (expect 200 + "Hello World!")
-curl http://localhost:3000
-
-# Verify PostgreSQL is ready (runs inside the db container)
-docker compose exec db pg_isready -U streamtube
-
-# Check container logs
-docker compose logs nestjs-api
-docker compose logs db
-
-# Tear down the entire environment
-docker compose down
-```
+Teardown: `docker compose down` preserves the named volumes.
 
 ## Commands
 
@@ -74,7 +70,7 @@ docker compose down
 ### Container-only commands (always prefix with `docker compose exec nestjs-api`)
 
 ```bash
-npm run start:dev                        # Dev server with hot-reload
+npm run start:dev                        # Dev server (already started by Compose; do not start a second instance)
 npm run build                            # Compile to dist/
 npm run start:prod                       # Run compiled build
 
@@ -174,3 +170,8 @@ NestJS with standard module structure. Source lives in `src/`, compiled output i
 ## REST Conventions
 
 This is a RESTful API. All endpoints must follow standard REST conventions — correct HTTP methods, proper status codes, plural resource nouns, and consistent URL structure. Details are enforced via rules on controller files.
+
+Owner-only metadata reads (`GET /videos/:id` and `/videos/by-url/:token`)
+are exempt from the inherited auth throttler so clients can poll processing
+status. JWT and ownership checks still apply. Upload/playback commands keep the
+existing throttler.

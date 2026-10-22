@@ -23,6 +23,7 @@ import {
 
 export class S3VideoStorage extends VideoStorage {
   private readonly client: S3Client;
+  private readonly signingClient: S3Client;
   private readonly bucket: string;
 
   constructor(config: ConfigType<typeof storageConfig>) {
@@ -39,6 +40,21 @@ export class S3VideoStorage extends VideoStorage {
       requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',
     });
+    // Sign the client-visible host itself: changing a signed URL's host later
+    // invalidates its signature. Server-to-server calls retain Docker DNS.
+    this.signingClient = config.publicEndpoint
+      ? new S3Client({
+          region: config.region,
+          endpoint: config.publicEndpoint,
+          forcePathStyle: true,
+          credentials: {
+            accessKeyId: config.accessKey,
+            secretAccessKey: config.secretKey,
+          },
+          requestChecksumCalculation: 'WHEN_REQUIRED',
+          responseChecksumValidation: 'WHEN_REQUIRED',
+        })
+      : this.client;
   }
 
   async createMultipart(key: string, contentType: string): Promise<string> {
@@ -101,7 +117,7 @@ export class S3VideoStorage extends VideoStorage {
     partNumber: number,
   ): Promise<string> {
     return getSignedUrl(
-      this.client,
+      this.signingClient,
       new UploadPartCommand({
         Bucket: this.bucket,
         Key: key,
@@ -114,7 +130,7 @@ export class S3VideoStorage extends VideoStorage {
 
   async signGet(key: string, attachment: boolean): Promise<string> {
     return getSignedUrl(
-      this.client,
+      this.signingClient,
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: key,

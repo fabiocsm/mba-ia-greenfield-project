@@ -3,8 +3,8 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-10-20T16:03:03-03:00"
-  docs/decisions/technical-decisions-videos.md: "2026-10-20T17:36:38-03:00"
-  docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-21T14:45:28-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-22T02:13:27-03:00"
+  docs/decisions/technical-decisions-video-draft-registration.md: "2026-10-22T02:08:26-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-10-20T16:03:03-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-10-20T16:03:03-03:00"
   docs/phases/phase-02-auth/context.md: "2026-10-20T16:03:03-03:00"
@@ -30,13 +30,14 @@ sources_mtime:
 - Reprodução via streaming (sem necessidade de download completo)
 - Download do vídeo pelo usuário
 
-**Out of scope:** _Not specified._
+**Out of scope:** video UI, public watch pages, anonymous playback, HLS/transcoding and phase 04 video/channel management.
 
 **Deliverables:** upload de até 10GB funcional, processamento automático do vídeo, streaming funcionando, URLs únicas geradas.
 
 **Affected subprojects:**
 
-_None named._
+- `nestjs-project/`: API, migration, storage, Redis and worker.
+- Repository AI foundation and phase documentation.
 
 **Deferred subprojects:** _None._
 
@@ -62,7 +63,7 @@ _None named._
 
 _Source files:_
 
-- videos — `docs/decisions/technical-decisions-videos.md` (scope_type: phase)
+- videos — `docs/decisions/technical-decisions-phase-03-videos.md` (scope_type: phase)
 - video-draft-registration — `docs/decisions/technical-decisions-video-draft-registration.md` (scope_type: ad-hoc, related_phases: [3])
 
 ## Capability Coverage
