@@ -1,8 +1,14 @@
-import { QueryFailedError } from 'typeorm';
+import { DataSource, QueryFailedError } from 'typeorm';
 import { ChannelsService } from './channels.service';
 import { Channel } from './entities/channel.entity';
 
-function makeManager(overrides: Record<string, jest.Mock> = {}): any {
+interface ChannelManager {
+  findOne: jest.Mock;
+  create: jest.Mock;
+  save: jest.Mock;
+}
+
+function makeManager(overrides: Partial<ChannelManager> = {}): ChannelManager {
   return {
     findOne: jest.fn(),
     create: jest.fn(),
@@ -24,19 +30,58 @@ function makeChannel(nickname: string): Channel {
 }
 
 function makeUniqueError(): QueryFailedError {
-  const err = new QueryFailedError('INSERT', [], new Error()) as any;
+  const err = new QueryFailedError(
+    'INSERT',
+    [],
+    new Error(),
+  ) as QueryFailedError & {
+    code: string;
+    detail: string;
+  };
   err.code = '23505';
   err.detail = 'Key (nickname)=(abc) already exists.';
   return err;
 }
 
-function makeDataSource(manager: any): any {
+function makeDataSource(manager: ChannelManager): DataSource {
   return {
-    transaction: jest.fn((cb: (manager: any) => Promise<any>) => cb(manager)),
-  };
+    transaction: jest.fn((cb: (current: ChannelManager) => Promise<Channel>) =>
+      cb(manager),
+    ),
+  } as unknown as DataSource;
 }
 
 describe('ChannelsService', () => {
+  describe('findByUserId', () => {
+    it('returns the channel for that user id', async () => {
+      const channel = makeChannel('test');
+      const findOne = jest.fn().mockResolvedValue(channel);
+      const dataSource = {
+        getRepository: jest.fn().mockReturnValue({ findOne }),
+        transaction: jest.fn(),
+      };
+      const service = new ChannelsService(dataSource as unknown as DataSource);
+
+      await expect(service.findByUserId('user-id')).resolves.toBe(channel);
+
+      expect(dataSource.getRepository).toHaveBeenCalledWith(Channel);
+      expect(findOne).toHaveBeenCalledWith({ where: { user_id: 'user-id' } });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the user has no channel', async () => {
+      const findOne = jest.fn().mockResolvedValue(null);
+      const dataSource = {
+        getRepository: jest.fn().mockReturnValue({ findOne }),
+        transaction: jest.fn(),
+      };
+      const service = new ChannelsService(dataSource as unknown as DataSource);
+
+      await expect(service.findByUserId('user-id')).resolves.toBeNull();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+  });
+
   describe('createChannel', () => {
     it('derives nickname from email prefix and saves when no collision', async () => {
       const channel = makeChannel('test');

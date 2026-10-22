@@ -43,34 +43,30 @@ O projeto é um monorepo baseado em containers Docker. Cada subprojeto sobe sua 
 
 - **Frontend** (Next.js 16, App Router + React Server Components) — interface da plataforma. Segue o **modelo BFF**: o navegador nunca chama a API NestJS diretamente; todo tráfego passa por Route Handlers same-origin em `app/api/**`, que fazem proxy server-side para a API.
 - **API** (NestJS 11) — regras de negócio, autenticação (JWT + refresh token rotation), envio de e-mails e acesso ao banco.
-- **Database** (PostgreSQL 17) — usuários, canais e tokens de autenticação.
+- **Database** (PostgreSQL 17) — usuários, canais, vídeos e tokens de autenticação.
 - **Email Service** (Mailpit) — captura os e-mails transacionais (confirmação de conta e recuperação de senha) em uma UI local.
-- **Video Worker** (FFmpeg) — processamento de vídeos *(planejado — Fase 03)*.
-- **Object Storage** (S3/MinIO) — arquivos de vídeo e thumbnails *(planejado — Fase 03)*.
-- **Message Queue** — fila de processamento de vídeos *(planejado — Fase 03)*.
+- **Video Worker** (FFmpeg) — processamento de vídeos *(implementado — Fase 03)*.
+- **Object Storage** (S3/MinIO) — arquivos de vídeo e thumbnails *(implementado — Fase 03)*.
+- **Message Queue** — fila de processamento de vídeos *(implementado — Fase 03)*.
 
 O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.mermaid`.
 
 ## 🚀 Como rodar
 
-Os dois subprojetos têm stacks Docker **separadas**. Suba primeiro o backend, rode as migrations e depois o frontend.
+Os dois subprojetos têm stacks Docker **separadas**. Suba primeiro o backend (migrations automáticas) e depois o frontend.
 
 ### 1. Backend (NestJS + PostgreSQL + Mailpit)
 
 ```bash
 cd nestjs-project
 
-# Sobe API, banco e Mailpit
-docker compose up -d
+# Na primeira execução, crie o ambiente local
+cp .env.example .env
 
-# Instala dependências (apenas na primeira vez)
-docker compose exec nestjs-api npm install
-
-# Cria o schema do banco (obrigatório — synchronize está desabilitado)
-docker compose exec nestjs-api npm run migration:run
-
-# Sobe o servidor de desenvolvimento em watch mode
-docker compose exec -d nestjs-api npm run start:dev
+# Instala dependências do lockfile, migra e inicia API, storage, fila e worker
+docker compose up -d --build
+docker compose ps
+curl --fail http://localhost:3000/
 ```
 
 Serviços disponíveis:
@@ -80,6 +76,8 @@ Serviços disponíveis:
 | API NestJS | http://localhost:3000 |
 | PostgreSQL | `localhost:5432` (db/user/senha: `streamtube`) |
 | Mailpit (UI de e-mails) | http://localhost:8025 |
+| Object storage S3 / console | http://localhost:9000 / http://localhost:9001 |
+| Redis (BullMQ) | `localhost:6379` |
 | Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` |
 
 ### 2. Frontend (Next.js)
@@ -105,7 +103,7 @@ A aplicação ficará disponível em **http://localhost:3001**.
 
 ```bash
 cd nestjs-project
-docker compose exec nestjs-api npm test               # unitários + integração
+docker compose exec nestjs-api npm test -- --runInBand # unitários + integração
 docker compose exec nestjs-api npm run test:e2e       # end-to-end (HTTP via supertest)
 docker compose exec nestjs-api npm run test:cov       # cobertura
 ```
@@ -125,6 +123,24 @@ Sufixos: `*.test.ts(x)` (unitário), `*.integration.test.ts(x)` (Route Handlers 
 ## ✅ Funcionalidades implementadas
 
 **Fase 01 — Configuração base** e **Fase 02 — Autenticação** estão concluídas (backend + frontend).
+
+### Vídeos (Fase 03 — backend)
+
+Pré-cadastro como rascunho, upload multipart direto ao storage de até
+10,000,000,000 bytes (10GB), retomada por partes, processamento pelo worker,
+duração/metadados, thumbnail, identidade única, streaming HTTP Range e download.
+O ciclo no banco é `draft → processing → ready/error`. Todas as rotas de vídeos
+exigem o dono autenticado; a interface de vídeos pertence às próximas fases.
+
+A API assina URLs para `STORAGE_PUBLIC_ENDPOINT` (padrão local:
+`http://localhost:9000`); internamente usa `minio:9000`. Em acesso remoto configure
+o endpoint público alcançável pelo cliente. Nunca altere o host da URL assinada.
+Os volumes do banco, fila e storage persistem ao recriar containers.
+
+[Decisões](docs/decisions/technical-decisions-phase-03-videos.md),
+[plano e SIs](docs/phases/phase-03-videos/phase-03-videos.md),
+[validação](docs/phases/phase-03-videos/validation.md) e
+[fundação Codex](docs/ai-foundation-codex.md).
 
 ### Autenticação (Fase 02)
 
@@ -173,7 +189,7 @@ green-field-ia-project/
 │   │   ├── config/                      # Configs namespaced (Joi)
 │   │   └── database/                    # data-source, migrations e seeds
 │   ├── test/                            # Testes e2e
-│   ├── compose.yaml                     # Docker Compose (API + PostgreSQL + Mailpit)
+│   ├── compose.yaml                     # Docker Compose (API + PostgreSQL + Mailpit + storage + Redis + worker)
 │   └── Dockerfile.dev
 ├── next-frontend/                       # Frontend (Next.js 16, App Router)
 │   ├── app/                             # Rotas, layouts, páginas e Route Handlers BFF
@@ -195,7 +211,7 @@ green-field-ia-project/
 |------|-----------|--------|
 | **01** | Configuração Base do Projeto | ✅ Concluída |
 | **02** | Cadastro, Login e Gerenciamento de Conta | ✅ Concluída |
-| **03** | Upload e Processamento de Vídeos | ⏳ Planejada |
+| **03** | Upload e Processamento de Vídeos | ✅ Concluída |
 | **04** | Gerenciamento de Vídeos e Canal | ⏳ Planejada |
 | **05** | Página de Visualização do Vídeo | ⏳ Planejada |
 | **06** | Interações Sociais (Likes, Comentários, Inscrições) | ⏳ Planejada |

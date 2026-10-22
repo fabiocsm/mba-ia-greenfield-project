@@ -12,18 +12,57 @@ This is a monorepo with two main areas:
 
 - `nestjs-project/` — Backend API (NestJS 11, TypeScript, Express). Contains modules for users, channels, videos, comments, etc.
 - `docs/` — Project documentation, architecture diagrams, and planning.
-- `next-frontend/` (Next.js) — not yet initialized
+- `next-frontend/` — initialized Next.js 16 frontend, authentication UI and BFF
+
+## Videos API
+
+`VideosModule` in `nestjs-project`. The owner authenticates with the same JWT as the rest of the API.
+
+- `POST /videos` — creates one draft on the caller's channel
+- `GET /videos/:id` — returns that draft, including `status`, `durationSeconds`, `technicalMetadata`, `thumbnailStored`, and `file`
+- `POST /videos/:id/upload` — opens or resumes a multipart upload
+- `POST /videos/:id/upload/complete` — stores `originals/{id}` and enqueues processing
+- `GET /videos/:id/playback` — presigned URL for the ready original, so the client can send `Range`
+- `GET /videos/:id/download` — presigned URL of that same original, with `Content-Disposition: attachment`
+
+Video bytes never pass through NestJS. The maximum is 10,000,000,000 bytes;
+5 MiB parts are uploaded directly to storage. The stable `url` field is `/videos/by-url/{token}`, resolving the unique
+URL-safe identity token with the same owner checks as `/videos/{id}`. Public
+watch pages belong to phase 05.
+
+Internal storage requests use `minio:9000`. Presigned URLs use
+`STORAGE_PUBLIC_ENDPOINT` (`http://localhost:9000` for a host browser), signed for
+that exact endpoint. Test clients inside Docker use the internal endpoint via the
+Jest setup. The queue producer waits at most 5 seconds and returns the documented
+503 if scheduling fails; repeating complete can schedule the same video safely.
+
+Processing uses the Compose service `video-worker` and the BullMQ queue `video-processing`. A scheduling failure returns `503` `VIDEO_PROCESSING_NOT_SCHEDULED`. Object storage is the Compose service `minio`, bucket `videos`. Status is `draft`
+→ `processing` → `ready`/`error`; media failures keep the original and fail the job.
+Terminal stalled jobs reconcile interrupted processing to `error`.
+
+Upload recovery verifies the immutable `originals/{id}` object before associating
+a completion whose database write was interrupted. Resume renews URLs for missing
+parts and parts with incorrect lengths. Repeating complete can reschedule a job
+that failed before claiming a draft; terminal media outcomes remain unchanged.
+The worker periodically reconciles persisted processing claims with terminal queue
+jobs, so a database outage cannot permanently lose an error update.
+
+`docker compose up -d --build` in `nestjs-project/` installs locked dependencies,
+runs migrations, provisions storage and starts API and worker. Named volumes
+persist PostgreSQL, video objects and Redis AOF. Research, plan and audit evidence
+are in `docs/phases/phase-03-videos/`; canonical decisions are in
+`docs/decisions/technical-decisions-phase-03-videos.md`.
 
 ## Architecture (C4 Container Diagram)
 
 See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 
 - **Frontend** (Next.js) → calls API via REST, streams from Object Storage
-- **API** (Nest.js) → business rules, auth, reads/writes DB, uploads to storage, publishes jobs to queue, sends emails
+- **API** (Nest.js) → business rules, auth, reads/writes DB, signs direct storage uploads, publishes jobs to queue, sends emails
 - **Video Worker** (FFmpeg) → consumes jobs from queue, processes videos, updates DB and storage
 - **Database** (PostgreSQL) → users, channels, videos, comments, likes
 - **Object Storage** (S3/MinIO) → video files and thumbnails
-- **Message Queue** (TBD) → video processing job queue
+- **Message Queue** (BullMQ no Redis, fila `video-processing`) → video processing job queue
 - **Email Service** (SMTP) → account confirmation and password recovery
 
 ## Docker Networking
@@ -35,7 +74,10 @@ Inside a container, `localhost` refers to the container itself, not the host mac
 - **Correct:** `DB_HOST=db` (the Compose service name)
 - **Wrong:** `DB_HOST=localhost`
 
-This applies to all environment variables, configuration files, and code that references service hosts.
+This applies to server-to-server connections. `STORAGE_PUBLIC_ENDPOINT` is the
+explicit exception: it describes the client's reachable host for signed URLs,
+not a server-to-server connection. Use an externally reachable HTTPS URL in a
+remote deployment.
 
 ## Working Principles
 
@@ -105,3 +147,16 @@ Skip documentation lookup only for trivial operations such as:
 
 If a library is involved and there is uncertainty, documentation lookup is mandatory.
 If the documentation returned does not match the installed version, flag the discrepancy before proceeding.
+
+## Codex foundation
+
+`AGENTS.md` at root and in both subprojects routes Codex to these shared
+instructions and the matching `.claude/rules/` files. `.agents/skills/` exposes
+all shared skills using relative symlinks. See `docs/ai-foundation-codex.md` for
+workflow/tool mappings and MCP configuration. Keep the phase artifact format
+identical across tools.
+
+Owner-only metadata reads (`GET /videos/:id` and `/videos/by-url/:token`)
+are exempt from the inherited auth throttler so clients can poll processing
+status. JWT and ownership checks still apply. Upload/playback commands keep the
+existing throttler.
